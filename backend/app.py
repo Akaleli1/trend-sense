@@ -3,11 +3,13 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from typing import Optional
-from backend.config import Config
-from backend.database.db import Database
+from config import Config
+from database.db import Database
+from etl.data_fetcher import fetch_all_trends_data
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend
+# Enable CORS for frontend (allow requests from localhost:3000)
+CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
 
 db = Database()
 
@@ -109,6 +111,75 @@ def not_found(error):
         "success": False,
         "error": "Endpoint not found"
     }), 404
+
+
+@app.route("/api/trends", methods=["GET"])
+def get_trends():
+    """Get trend data from external APIs (Hacker News and News API).
+    
+    This endpoint fetches real data from external sources and returns
+    sentiment scores (currently dummy scores, will be replaced with AI later).
+    
+    Query parameters:
+        keywords: Comma-separated list of keywords (optional, defaults to config)
+    """
+    try:
+        # Get keywords from query params or use default
+        keywords_param = request.args.get("keywords")
+        keywords = None
+        if keywords_param:
+            keywords = [k.strip() for k in keywords_param.split(",")]
+        
+        # Fetch data from external APIs
+        trends_data = fetch_all_trends_data(keywords)
+        
+        # Transform data for chart consumption
+        # Group by keyword and date, calculate average sentiment per day
+        chart_data = {}
+        
+        for item in trends_data:
+            keyword = item.get('keyword', 'Unknown')
+            date = item.get('created_at', datetime.now().isoformat()).split('T')[0]
+            sentiment = item.get('sentiment', 0.0)
+            
+            key = f"{keyword}_{date}"
+            if key not in chart_data:
+                chart_data[key] = {
+                    'keyword': keyword,
+                    'date': date,
+                    'sentiments': [],
+                    'articles': 0
+                }
+            
+            chart_data[key]['sentiments'].append(sentiment)
+            chart_data[key]['articles'] += 1
+        
+        # Calculate averages and format for chart
+        formatted_data = []
+        for key, data in chart_data.items():
+            avg_sentiment = sum(data['sentiments']) / len(data['sentiments']) if data['sentiments'] else 0.0
+            formatted_data.append({
+                'date': data['date'],
+                'keyword': data['keyword'],
+                'sentiment': round(avg_sentiment, 2),
+                'articles': data['articles']
+            })
+        
+        # Sort by date
+        formatted_data.sort(key=lambda x: x['date'])
+        
+        return jsonify({
+            "success": True,
+            "count": len(formatted_data),
+            "data": formatted_data,
+            "raw_data": trends_data  # Include raw data for debugging
+        })
+    
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 
 @app.errorhandler(500)
