@@ -3,6 +3,7 @@ import os
 import requests
 import time
 import re
+import random
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import google.generativeai as genai
@@ -22,68 +23,76 @@ else:
 def analyze_sentiment(text: str) -> float:
     """Analyze sentiment of text using Google Gemini API.
     
+    TEMPORARILY BYPASSED: Returns random float to avoid API rate limits during development.
+    
     Args:
         text: Text to analyze (headline or content)
         
     Returns:
-        Sentiment score between -1.0 (negative) and 1.0 (positive).
-        Returns 0.0 (neutral) if API fails or key is missing.
+        Sentiment score between -0.9 (negative) and 0.9 (positive).
+        Returns 0.0 (neutral) if text is empty.
     """
-    if not gemini_model:
-        return 0.0
-    
     if not text or not text.strip():
         return 0.0
     
-    # Create prompt for sentiment analysis
-    prompt = f"""Analyze the sentiment of this tech news headline: '{text}'. Return ONLY a float number between -1.0 (negative) and 1.0 (positive). No explanation."""
+    # TEMPORARY: Bypass Gemini API to avoid rate limits
+    print(f"   (Mocking AI: Skipping Gemini API to avoid quotas)")
+    # Return random float between -0.9 and 0.9
+    return round(random.uniform(-0.9, 0.9), 2)
     
-    # Try with retry logic for 429 errors
-    for attempt in range(2):  # Try twice (initial + one retry)
-        try:
-            # Generate response
-            response = gemini_model.generate_content(prompt)
-            response_text = response.text.strip()
-            
-            # Extract float from response (handle cases where Gemini returns text with number)
-            # Look for a float pattern in the response
-            float_pattern = r'-?\d+\.?\d*'
-            matches = re.findall(float_pattern, response_text)
-            
-            if matches:
-                # Get the first number that looks like a float
-                sentiment = float(matches[0])
-                # Clamp to valid range [-1.0, 1.0]
-                sentiment = max(-1.0, min(1.0, sentiment))
-                return round(sentiment, 2)
-            else:
-                # If no number found, return neutral
-                print(f"Warning: Could not parse sentiment from response: {response_text}")
-                return 0.0
-        
-        except Exception as e:
-            error_str = str(e)
-            # Check if it's a 429 Quota Exceeded error
-            if '429' in error_str or 'Quota Exceeded' in error_str or 'quota' in error_str.lower():
-                if attempt == 0:
-                    # First attempt failed with 429, wait and retry
-                    print("⚠️ Quota hit. Waiting 20s...")
-                    time.sleep(20)
-                    continue  # Retry once
-                else:
-                    # Already retried, give up
-                    print(f"   ❌ Rate limit still exceeded after retry. Returning neutral sentiment.")
-                    return 0.0
-            else:
-                # Other error, don't retry
-                print(f"Error analyzing sentiment: {e}")
-                return 0.0
-    
-    # If we get here, both attempts failed
-    return 0.0
+    # COMMENTED OUT: Real Gemini API call (restore when ready)
+    # if not gemini_model:
+    #     return 0.0
+    # 
+    # # Create prompt for sentiment analysis
+    # prompt = f"""Analyze the sentiment of this tech news headline: '{text}'. Return ONLY a float number between -1.0 (negative) and 1.0 (positive). No explanation."""
+    # 
+    # # Try with retry logic for 429 errors
+    # for attempt in range(2):  # Try twice (initial + one retry)
+    #     try:
+    #         # Generate response
+    #         response = gemini_model.generate_content(prompt)
+    #         response_text = response.text.strip()
+    #         
+    #         # Extract float from response (handle cases where Gemini returns text with number)
+    #         # Look for a float pattern in the response
+    #         float_pattern = r'-?\d+\.?\d*'
+    #         matches = re.findall(float_pattern, response_text)
+    #         
+    #         if matches:
+    #             # Get the first number that looks like a float
+    #             sentiment = float(matches[0])
+    #             # Clamp to valid range [-1.0, 1.0]
+    #             sentiment = max(-1.0, min(1.0, sentiment))
+    #             return round(sentiment, 2)
+    #         else:
+    #             # If no number found, return neutral
+    #             print(f"Warning: Could not parse sentiment from response: {response_text}")
+    #             return 0.0
+    #     
+    #     except Exception as e:
+    #         error_str = str(e)
+    #         # Check if it's a 429 Quota Exceeded error
+    #         if '429' in error_str or 'Quota Exceeded' in error_str or 'quota' in error_str.lower():
+    #             if attempt == 0:
+    #                 # First attempt failed with 429, wait and retry
+    #                 print("⚠️ Quota hit. Waiting 20s...")
+    #                 time.sleep(20)
+    #                 continue  # Retry once
+    #             else:
+    #                 # Already retried, give up
+    #                 print(f"   ❌ Rate limit still exceeded after retry. Returning neutral sentiment.")
+    #                 return 0.0
+    #         else:
+    #             # Other error, don't retry
+    #             print(f"Error analyzing sentiment: {e}")
+    #             return 0.0
+    # 
+    # # If we get here, both attempts failed
+    # return 0.0
 
 
-def fetch_hacker_news_data(keyword: str, limit: int = 3) -> List[Dict[str, Any]]:
+def fetch_hacker_news_data(keyword: str, limit: int = 5) -> List[Dict[str, Any]]:
     """Fetch data from Hacker News API.
     
     Args:
@@ -111,9 +120,9 @@ def fetch_hacker_news_data(keyword: str, limit: int = 3) -> List[Dict[str, Any]]
                 # Analyze sentiment using Gemini AI
                 sentiment = analyze_sentiment(text_for_analysis)
                 
-                # Rate limiting: wait 4 seconds after each API call (15 req/min = 4s delay)
-                print(f"   (Sleeping for 4s to respect API limits...)")
-                time.sleep(4)
+                # COMMENTED OUT: Rate limiting delays (not needed when mocking API)
+                # print(f"   (Sleeping for 4s to respect API limits...)")
+                # time.sleep(4)
                 
                 results.append({
                     'title': title,
@@ -130,7 +139,7 @@ def fetch_hacker_news_data(keyword: str, limit: int = 3) -> List[Dict[str, Any]]
     return results
 
 
-def fetch_news_api_data(keyword: str, limit: int = 3) -> List[Dict[str, Any]]:
+def fetch_news_api_data(keyword: str, limit: int = 5) -> List[Dict[str, Any]]:
     """Fetch data from News API.
     
     Args:
@@ -172,9 +181,9 @@ def fetch_news_api_data(keyword: str, limit: int = 3) -> List[Dict[str, Any]]:
                     # Analyze sentiment using Gemini AI
                     sentiment = analyze_sentiment(text_for_analysis)
                     
-                    # Rate limiting: wait 4 seconds after each API call (15 req/min = 4s delay)
-                    print(f"   (Sleeping for 4s to respect API limits...)")
-                    time.sleep(4)
+                    # COMMENTED OUT: Rate limiting delays (not needed when mocking API)
+                    # print(f"   (Sleeping for 4s to respect API limits...)")
+                    # time.sleep(4)
                     
                     results.append({
                         'title': title,
@@ -200,11 +209,13 @@ def fetch_all_trends_data(keywords: List[str] = None) -> List[Dict[str, Any]]:
     Returns:
         List of all fetched data with sentiment scores
     """
+    # Restore full keyword list (bypassing Gemini API, so no rate limit concerns)
     keywords = keywords or Config.KEYWORDS
+    
     all_data = []
     
     print(f"Fetching trends data for keywords: {', '.join(keywords)}")
-    print("Using Google Gemini AI for sentiment analysis...")
+    print("⚠️  MOCK MODE: Using random sentiment scores (Gemini API bypassed)")
     
     for keyword in keywords:
         print(f"\nProcessing keyword: {keyword}")

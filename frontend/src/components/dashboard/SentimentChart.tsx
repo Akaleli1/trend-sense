@@ -16,6 +16,7 @@ import { TrendingUp, Loader2 } from 'lucide-react';
 interface TrendData {
   date: string;
   keyword: string;
+  name?: string; // Optional name field from backend
   sentiment: number;
   articles: number;
 }
@@ -39,20 +40,23 @@ interface CustomTooltipProps {
 const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
+    // Get keyword from payload - try both keyword and name fields
+    const keyword = data.keyword || data.name || 'Unknown';
+    
     return (
-      <div className="bg-white dark:bg-gray-800 p-3 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+      <div className="bg-white dark:bg-gray-800 p-4 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+        <p className="text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">
           {new Date(label || '').toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'short',
             day: 'numeric',
           })}
         </p>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Keyword: <span className="font-semibold">{data.keyword}</span>
+        <p className="text-sm text-blue-600 dark:text-blue-400 font-semibold mb-1">
+          Tech: {keyword}
         </p>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Sentiment: <span className="font-semibold text-blue-600">{data.sentiment.toFixed(2)}</span>
+          Sentiment: <span className="font-semibold">{data.sentiment.toFixed(2)}</span>
         </p>
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Articles: <span className="font-semibold">{data.articles}</span>
@@ -101,20 +105,31 @@ export default function SentimentChart() {
   const totalArticles = data.reduce((sum, d) => sum + d.articles, 0);
   
   // Group data by date for the chart (average sentiment per date)
+  // Preserve keyword information - use the first keyword found for each date
   const chartData = data.reduce((acc, item) => {
     const date = item.date;
     if (!acc[date]) {
-      acc[date] = { date, sentiments: [], articles: 0 };
+      acc[date] = { 
+        date, 
+        sentiments: [], 
+        articles: 0,
+        keywords: [] as string[] // Track keywords for this date
+      };
     }
     acc[date].sentiments.push(item.sentiment);
     acc[date].articles += item.articles;
+    // Add keyword if not already present
+    if (item.keyword && !acc[date].keywords.includes(item.keyword)) {
+      acc[date].keywords.push(item.keyword);
+    }
     return acc;
-  }, {} as Record<string, { date: string; sentiments: number[]; articles: number }>);
+  }, {} as Record<string, { date: string; sentiments: number[]; articles: number; keywords: string[] }>);
 
   const chartDataPoints = Object.values(chartData).map(item => ({
     date: item.date,
     sentiment: item.sentiments.reduce((sum, s) => sum + s, 0) / item.sentiments.length,
     articles: item.articles,
+    keyword: item.keywords.length > 0 ? item.keywords.join(', ') : 'Unknown', // Preserve keyword(s)
   })).sort((a, b) => a.date.localeCompare(b.date));
 
   if (loading) {

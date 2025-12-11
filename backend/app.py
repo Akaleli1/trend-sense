@@ -118,7 +118,7 @@ def get_trends():
     """Get trend data from external APIs (Hacker News and News API).
     
     This endpoint fetches real data from external sources and returns
-    sentiment scores (currently dummy scores, will be replaced with AI later).
+    sentiment scores.
     
     Query parameters:
         keywords: Comma-separated list of keywords (optional, defaults to config)
@@ -138,11 +138,23 @@ def get_trends():
         chart_data = {}
         
         for item in trends_data:
-            keyword = item.get('keyword', 'Unknown')
-            date = item.get('created_at', datetime.now().isoformat()).split('T')[0]
+            # DÜZELTME 1: Keyword'ün boş gelme ihtimaline karşı sıkı kontrol
+            keyword = item.get('keyword')
+            if not keyword:
+                keyword = 'Unknown'
+                
+            # Date handling
+            raw_date = item.get('created_at', datetime.now().isoformat())
+            try:
+                date = raw_date.split('T')[0]
+            except:
+                date = datetime.now().strftime("%Y-%m-%d")
+
             sentiment = item.get('sentiment', 0.0)
             
+            # Benzersiz anahtar oluştur
             key = f"{keyword}_{date}"
+            
             if key not in chart_data:
                 chart_data[key] = {
                     'keyword': keyword,
@@ -158,9 +170,12 @@ def get_trends():
         formatted_data = []
         for key, data in chart_data.items():
             avg_sentiment = sum(data['sentiments']) / len(data['sentiments']) if data['sentiments'] else 0.0
+            
             formatted_data.append({
                 'date': data['date'],
                 'keyword': data['keyword'],
+                # DÜZELTME 2: Recharts için 'name' alanı eklendi (Tooltip bunu sever)
+                'name': data['keyword'], 
                 'sentiment': round(avg_sentiment, 2),
                 'articles': data['articles']
             })
@@ -172,10 +187,12 @@ def get_trends():
             "success": True,
             "count": len(formatted_data),
             "data": formatted_data,
-            "raw_data": trends_data  # Include raw data for debugging
+            # Debug için raw_data'yı da gönderiyoruz
+            "raw_data": trends_data[:5] 
         })
     
     except Exception as e:
+        print(f"Error in get_trends: {e}") # Backend terminalinde hatayı görmek için
         return jsonify({
             "success": False,
             "error": str(e)
