@@ -1,4 +1,5 @@
 import SentimentChart from '@/components/dashboard/SentimentChart';
+import StatsCards from '@/components/dashboard/StatsCards';
 
 export default function Home() {
   return (
@@ -11,6 +12,9 @@ export default function Home() {
           <p className="text-gray-600 dark:text-gray-400">
             Real-time technology sentiment analysis and trends
           </p>
+        </div>
+        <div className="mb-8">
+          <StatsCards />
         </div>
         <SentimentChart />
       </div>

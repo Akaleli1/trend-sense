@@ -83,14 +83,16 @@ def get_keywords():
 
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
-    """Get statistics for sentiments.
+    """Get advanced statistics for sentiments including top/bottom keywords.
     
-    Query parameters:
-        keyword: Filter by keyword (optional)
+    Returns:
+        - total_articles: Total count of articles
+        - average_sentiment: Overall average sentiment score
+        - top_keywords: Top 3 keywords with highest sentiment
+        - bottom_keywords: Bottom 3 keywords with lowest sentiment
     """
     try:
-        keyword = request.args.get("keyword")
-        stats = db.get_stats(keyword=keyword)
+        stats = db.get_advanced_stats()
         
         return jsonify({
             "success": True,
@@ -98,6 +100,7 @@ def get_stats():
         })
     
     except Exception as e:
+        print(f"Error in get_stats: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
@@ -115,44 +118,51 @@ def not_found(error):
 
 @app.route("/api/trends", methods=["GET"])
 def get_trends():
-    """Get trend data from external APIs (Hacker News and News API).
+    """Get trend data from the database.
     
-    This endpoint fetches real data from external sources and returns
-    sentiment scores.
+    This endpoint reads data from the local SQLite database instead of
+    calling external APIs on every request.
     
     Query parameters:
-        keywords: Comma-separated list of keywords (optional, defaults to config)
+        limit: Maximum number of records to return (default: 100)
     """
     try:
-        # Get keywords from query params or use default
-        keywords_param = request.args.get("keywords")
-        keywords = None
-        if keywords_param:
-            keywords = [k.strip() for k in keywords_param.split(",")]
+        limit = request.args.get("limit", type=int) or 100
         
-        # Fetch data from external APIs
-        trends_data = fetch_all_trends_data(keywords)
+        # Fetch data from database
+        sentiments_data = db.get_recent_sentiments(limit=limit)
+        
+        if not sentiments_data:
+            return jsonify({
+                "success": True,
+                "count": 0,
+                "data": [],
+                "message": "No data in database. Use POST /api/trigger-etl to fetch data."
+            })
         
         # Transform data for chart consumption
         # Group by keyword and date, calculate average sentiment per day
         chart_data = {}
         
-        for item in trends_data:
-            # DÜZELTME 1: Keyword'ün boş gelme ihtimaline karşı sıkı kontrol
-            keyword = item.get('keyword')
+        for item in sentiments_data:
+            keyword = item.get('keyword', 'Unknown')
             if not keyword:
                 keyword = 'Unknown'
                 
             # Date handling
             raw_date = item.get('created_at', datetime.now().isoformat())
             try:
-                date = raw_date.split('T')[0]
+                # Handle both string and datetime objects
+                if isinstance(raw_date, str):
+                    date = raw_date.split('T')[0]
+                else:
+                    date = raw_date.strftime("%Y-%m-%d")
             except:
                 date = datetime.now().strftime("%Y-%m-%d")
 
             sentiment = item.get('sentiment', 0.0)
             
-            # Benzersiz anahtar oluştur
+            # Create unique key
             key = f"{keyword}_{date}"
             
             if key not in chart_data:
@@ -174,7 +184,6 @@ def get_trends():
             formatted_data.append({
                 'date': data['date'],
                 'keyword': data['keyword'],
-                # DÜZELTME 2: Recharts için 'name' alanı eklendi (Tooltip bunu sever)
                 'name': data['keyword'], 
                 'sentiment': round(avg_sentiment, 2),
                 'articles': data['articles']
@@ -186,13 +195,44 @@ def get_trends():
         return jsonify({
             "success": True,
             "count": len(formatted_data),
-            "data": formatted_data,
-            # Debug için raw_data'yı da gönderiyoruz
-            "raw_data": trends_data[:5] 
+            "data": formatted_data
         })
     
     except Exception as e:
-        print(f"Error in get_trends: {e}") # Backend terminalinde hatayı görmek için
+        print(f"Error in get_trends: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/api/trigger-etl", methods=["POST"])
+def trigger_etl():
+    """Manually trigger the ETL pipeline to fetch and save data.
+    
+    This endpoint calls the external APIs and saves the data to the database.
+    Use this to populate or refresh the database.
+    """
+    try:
+        # Get keywords from query params or use default
+        keywords_param = request.args.get("keywords")
+        keywords = None
+        if keywords_param:
+            keywords = [k.strip() for k in keywords_param.split(",")]
+        
+        print("🚀 Triggering ETL pipeline...")
+        
+        # Fetch data from external APIs and save to database
+        trends_data = fetch_all_trends_data(keywords)
+        
+        return jsonify({
+            "success": True,
+            "message": f"ETL completed. Processed {len(trends_data)} articles.",
+            "count": len(trends_data)
+        })
+    
+    except Exception as e:
+        print(f"Error in trigger_etl: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
