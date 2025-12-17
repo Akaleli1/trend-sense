@@ -1,177 +1,136 @@
-"""Helper functions to fetch data from external APIs and return structured data."""
+"""Helper functions to fetch REAL data and analyze with Gemini AI."""
 import os
 import requests
 import time
 import re
 import random
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from datetime import datetime
 import google.generativeai as genai
 from config import Config
 from database.db import Database
 
-# Configure Gemini API (Sadece göstermelik duruyor, aşağıda bypass ediyoruz)
+# --- GEMINI AYARLARI ---
 if Config.GEMINI_API_KEY:
     genai.configure(api_key=Config.GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel('gemini-2.0-flash')
 else:
     gemini_model = None
+    print("Warning: GEMINI_API_KEY bulunamadı!")
 
 def analyze_sentiment(text: str) -> float:
-    """Analyze sentiment of text using Mock AI (Random Score)."""
-    if not text or not text.strip():
-        return 0.0
+    """REAL Gemini AI Analysis."""
+    if not text or not text.strip(): return 0.0
+    if not gemini_model: return 0.0
+
+    # Prompt
+    prompt = f"""Analyze the sentiment of this tech news headline: '{text}'. 
+    Return ONLY a float number between -1.0 (negative) and 1.0 (positive). No explanation."""
     
-    # MOCK MODE: API'ye gitme, rastgele sayı döndür
-    print(f"   (Mocking AI: Skipping Gemini API to avoid quotas)")
-    return round(random.uniform(-0.9, 0.9), 2)
-
-
-def fetch_hacker_news_data(keyword: str, limit: int = 5) -> List[Dict[str, Any]]:
-    """Fetch data from Hacker News API."""
-    results = []
-    try:
-        url = f"https://hn.algolia.com/api/v1/search?query={keyword}&tags=story"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            for item in data.get('hits', [])[:limit]:
-                title = item.get('title', '')
-                content = item.get('story_text', '') or title
-                text_for_analysis = title if title else content[:200]
-                
-                sentiment = analyze_sentiment(text_for_analysis)
-                
-                results.append({
-                    'title': title,
-                    'content': content,
-                    'url': item.get('url', f"https://news.ycombinator.com/item?id={item.get('objectID', '')}"),
-                    'source': 'hackernews',
-                    'keyword': keyword,
-                    'sentiment': sentiment,
-                    'created_at': datetime.fromtimestamp(item.get('created_at_i', 0)).isoformat() if item.get('created_at_i') else datetime.now().isoformat()
-                })
-    except Exception as e:
-        print(f"Error fetching Hacker News data: {e}")
-    return results
-
-
-def fetch_news_api_data(keyword: str, limit: int = 5) -> List[Dict[str, Any]]:
-    """Fetch data from News API."""
-    results = []
-    api_key = os.getenv("NEWS_API_KEY")
+    # Retry Logic (429 Hataları için)
+    for attempt in range(3): # Deneme sayısını 3'e çıkardık
+        try:
+            response = gemini_model.generate_content(prompt)
+            # Sayıyı ayıkla (regex ile)
+            match = re.search(r'-?\d+\.?\d*', response.text)
+            if match:
+                score = float(match.group())
+                return max(-1.0, min(1.0, score)) # Sınırla
+            return 0.0
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e) or "429" in str(e):
+                wait_time = 60 # 60 Saniye bekle (Google Free Tier çok hassas)
+                print(f"⚠️  Kota Sınırı (429). {wait_time} saniye bekleniyor... (Deneme {attempt+1}/3)")
+                time.sleep(wait_time)
+            else:
+                print(f"AI Hatası: {e}")
+                return 0.0
     
-    if not api_key:
-        print("Warning: NEWS_API_KEY not found. Skipping News API fetch.")
-        return results
-    
-    try:
-        url = "https://newsapi.org/v2/everything"
-        params = {
-            'q': keyword,
-            'apiKey': api_key,
-            'language': 'en',
-            'sortBy': 'relevancy',
-            'pageSize': limit
-        }
-        
-        response = requests.get(url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('totalResults', 0) > 0:
-                for item in data.get('articles', [])[:limit]:
-                    title = item.get('title', '')
-                    content = item.get('content', '') or item.get('description', '')
-                    text_for_analysis = title if title else content[:200]
-                    
-                    sentiment = analyze_sentiment(text_for_analysis)
-                    
-                    results.append({
-                        'title': title,
-                        'content': content,
-                        'url': item.get('url', ''),
-                        'source': 'news',
-                        'keyword': keyword,
-                        'sentiment': sentiment,
-                        'created_at': item.get('publishedAt', datetime.now().isoformat())
-                    })
-    except Exception as e:
-        print(f"Error fetching News API data: {e}")
-    return results
-
+    print("   ❌ Analiz başarısız (Varsayılan 0.0 atandı)")
+    return 0.0
 
 def fetch_all_trends_data(keywords: List[str] = None) -> List[Dict[str, Any]]:
-    """Fetch data for all keywords AND SAVE TO DATABASE."""
+    """Fetch real data, check DB cache, analyze new ones."""
     keywords = keywords or Config.KEYWORDS
     
-    all_data = []
-    
-    print(f"Fetching trends data for keywords: {', '.join(keywords)}")
-    print("⚠️  MOCK MODE: Using random sentiment scores (Gemini API bypassed)")
-    
-    for keyword in keywords:
-        print(f"\nProcessing keyword: {keyword}")
-        
-        # Hacker News
-        hn_data = fetch_hacker_news_data(keyword, limit=5)
-        all_data.extend(hn_data)
-        
-        # News API
-        news_data = fetch_news_api_data(keyword, limit=5)
-        all_data.extend(news_data)
-        
-        time.sleep(0.1)
-    
-    print(f"\nTotal articles fetched: {len(all_data)}")
-    
-    # ---------------------------------------------------------
-    # DATABASE KAYIT BÖLÜMÜ (ZAMANDA YOLCULUK)
-    # ---------------------------------------------------------
-    print("\n💾 Saving data to database with FAKE DATES (for chart demo)...")
     db = Database()
     db.create_tables()
     
-    saved_count = 0
-    duplicate_count = 0
+    # İşlenen tüm verileri toplamak için liste
+    total_processed = []
     
-    for item in all_data:
-        # -----------------------------------------------------
-        # HİLE: Tarihi rastgele geriye al (0 ile 14 gün arası)
-        # -----------------------------------------------------
-        days_ago = random.randint(0, 14)
-        fake_date = datetime.now() - timedelta(days=days_ago)
+    print(f"🔍 Trendler taranıyor: {', '.join(keywords)}")
+
+    for keyword in keywords:
+        print(f"\n--- İşleniyor: {keyword} ---")
         
-        # DÜZELTME: db.insert_sentiment metodunu kullanmıyoruz çünkü o bugünün tarihini atıyor.
-        # Bunun yerine direkt SQL ile manuel ekleme yapıyoruz.
+        # 1. Kaynaklardan Veriyi Çek
+        raw_articles = []
+        
+        # Hacker News
         try:
-            with db.get_connection() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO sentiments 
-                    (keyword, source, title, content, url, sentiment_score, summary, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item.get('keyword', 'Unknown'),
-                        item.get('source', 'unknown'),
-                        item.get('title', ''),
-                        item.get('content', ''),
-                        item.get('url', ''),
-                        item.get('sentiment', 0.0),
-                        item.get('title', '')[:200], # Summary
-                        fake_date.isoformat() # İŞTE BURADA SAHTE TARİHİ VERİYORUZ
-                    )
-                )
-                saved_count += 1
-        except Exception as e:
-            # Hata muhtemelen Duplicate URL'dir, saymıyoruz
-            # print(f"Insert error: {e}") # Debug için açılabilir
-            duplicate_count += 1
+            # timeout süresini artırdık
+            hn_resp = requests.get(f"https://hn.algolia.com/api/v1/search?query={keyword}&tags=story", timeout=10).json()
+            for item in hn_resp.get('hits', [])[:3]: 
+                raw_articles.append({
+                    'title': item.get('title', ''),
+                    'url': item.get('url', f"https://news.ycombinator.com/item?id={item.get('objectID')}"),
+                    'source': 'hackernews',
+                    'keyword': keyword
+                })
+        except Exception as e: print(f"HN Hatası: {e}")
+
+        # News API
+        api_key = os.getenv("NEWS_API_KEY")
+        if api_key:
+            try:
+                news_resp = requests.get("https://newsapi.org/v2/everything", params={'q': keyword, 'apiKey': api_key, 'pageSize': 3, 'language': 'en'}, timeout=10).json()
+                for item in news_resp.get('articles', [])[:3]:
+                    raw_articles.append({
+                        'title': item.get('title', ''),
+                        'url': item.get('url', ''),
+                        'source': 'news',
+                        'keyword': keyword
+                    })
+            except Exception as e: print(f"NewsAPI Hatası: {e}")
+
+        # 2. Veritabanı Kontrolü ve Analiz
+        new_count = 0
+        for article in raw_articles:
+            # EĞER URL ZATEN VARSA -> ATLAMA
+            if db.check_if_url_exists(article['url']):
+                print(f"   ⏭️  Atlandı: {article['title'][:30]}...")
+                continue
             
-    
-    print(f"✅ Saved {saved_count} records with distributed dates.")
-    if duplicate_count > 0:
-        print(f"⚠️  Skipped {duplicate_count} duplicates.")
-    return all_data
+            # YOKSA -> GEMINI'YE SOR
+            print(f"   🧠 AI Analiz Ediyor: {article['title'][:40]}...")
+            sentiment = analyze_sentiment(article['title'])
+            
+            # Kaydet
+            success = db.insert_sentiment(
+                keyword=article['keyword'],
+                source=article['source'],
+                title=article['title'],
+                content='',
+                url=article['url'],
+                sentiment_score=sentiment,
+                summary=article['title']
+            )
+            
+            if success:
+                new_count += 1
+                total_processed.append(article)
+            
+            # 🔥 HIZ FRENI: Her başarılı API isteğinden sonra 10 saniye bekle
+            # Bu, "Requests Per Minute" (RPM) limitini aşmamızı engeller.
+            print("   ⏳ API soğutma (10sn)...")
+            time.sleep(10) 
+            
+        print(f"   ✅ {new_count} yeni makale kaydedildi.")
+
+    # init_db.py'nin hata vermemesi için dolu liste döndür
+    # Eğer hiç yeni veri yoksa bile, işlem yapıldığını belirtmek için True gibi davranacak bir liste dönüyoruz.
+    if not total_processed:
+        return [{"status": "completed_no_new_data"}]
+        
+    return total_processed

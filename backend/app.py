@@ -251,7 +251,7 @@ def internal_error(error):
 if __name__ == "__main__":
     app.run(
         host=Config.FLASK_HOST,
-        port=Config.FLASK_PORT,
+        port=5001,
         debug=Config.FLASK_DEBUG
     )
 

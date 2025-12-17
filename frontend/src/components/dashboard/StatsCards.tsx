@@ -40,7 +40,7 @@ export default function StatsCards() {
         setLoading(true);
         setError(null);
         
-        const response = await fetch('http://127.0.0.1:5000/api/stats');
+        const response = await fetch('http://127.0.0.1:5001/api/stats');
         const result: ApiResponse = await response.json();
         
         if (result.success && result.stats) {

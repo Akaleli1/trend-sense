@@ -11,7 +11,6 @@ class Database:
     
     def __init__(self, db_path: Optional[str] = None):
         """Initialize database connection."""
-        # Config'den gelen yolu kullan veya varsayılanı ayarla
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.db_path = db_path or os.path.join(base_dir, "data", "sentiments.db")
         self._ensure_db_directory()
@@ -58,149 +57,84 @@ class Database:
         except Exception as e:
             print(f"❌ Tablo oluşturma hatası: {e}")
 
-    def insert_sentiment(
-        self,
-        keyword: str,
-        source: str,
-        title: str,
-        content: str,
-        url: str,
-        sentiment_score: float,
-        summary: str
-    ) -> bool:
-        """Insert a sentiment record into the database."""
+    # --- YENİ EKLENEN AKILLI KONTROL FONKSİYONU ---
+    def check_if_url_exists(self, url: str) -> bool:
+        """Check if a URL already exists in the database to avoid re-analysis."""
+        query = "SELECT 1 FROM sentiments WHERE url = ?"
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO sentiments 
-                    (keyword, source, title, content, url, sentiment_score, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
+                cursor.execute(query, (url,))
+                return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error checking URL: {e}")
+            return False
+    # ----------------------------------------------
+
+    def insert_sentiment(self, keyword: str, source: str, title: str, content: str, url: str, sentiment_score: float, summary: str) -> bool:
+        """Insert a sentiment record."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO sentiments (keyword, source, title, content, url, sentiment_score, summary) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (keyword, source, title, content, url, sentiment_score, summary)
                 )
                 return True
         except sqlite3.IntegrityError:
-            # Duplicate URL - bu hatayı yutuyoruz, sorun değil
             return False
         except Exception as e:
             print(f"❌ Veri ekleme hatası: {e}")
             return False
-    
-    def get_recent_sentiments(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get recent sentiment records from the database."""
-        # Frontend 'sentiment' bekliyor ama DB'de 'sentiment_score' var. Alias (as) kullanıyoruz.
-        query = """
-            SELECT 
-                id,
-                keyword,
-                source,
-                title,
-                content,
-                url,
-                sentiment_score as sentiment, 
-                summary,
-                created_at
-            FROM sentiments 
-            ORDER BY created_at DESC 
-            LIMIT ?
-        """
+
+    def get_sentiments(self, keyword=None, source=None, start_date=None, end_date=None, limit=None) -> List[Dict[str, Any]]:
+        """Query sentiments with filters."""
+        query = "SELECT * FROM sentiments WHERE 1=1"
+        params = []
+        if keyword:
+            query += " AND keyword = ?"; params.append(keyword)
+        if source:
+            query += " AND source = ?"; params.append(source)
+        if start_date:
+            query += " AND DATE(created_at) >= ?"; params.append(start_date)
+        if end_date:
+            query += " AND DATE(created_at) <= ?"; params.append(end_date)
+        query += " ORDER BY created_at DESC"
+        if limit:
+            query += " LIMIT ?"; params.append(limit)
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(query, (limit,))
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            print(f"❌ Veri çekme hatası: {e}")
-            return []
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception: return []
+
+    def get_recent_sentiments(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recent sentiment records."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, keyword, source, title, content, url, sentiment_score as sentiment, summary, created_at FROM sentiments ORDER BY created_at DESC LIMIT ?", (limit,))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception: return []
 
     def get_keywords(self) -> List[str]:
-        """Get all unique keywords from the database."""
+        """Get unique keywords."""
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT DISTINCT keyword FROM sentiments ORDER BY keyword")
-                return [row[0] for row in cursor.fetchall()]
-        except:
-            return []
-            
-    def get_stats(self, keyword: Optional[str] = None) -> Dict[str, Any]:
-        """Get statistics for sentiments."""
-        query = "SELECT COUNT(*) as count, AVG(sentiment_score) as avg_score FROM sentiments WHERE 1=1"
-        params = []
-        
-        if keyword:
-            query += " AND keyword = ?"
-            params.append(keyword)
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            row = cursor.fetchone()
-            
-            return {
-                "total_count": row[0] if row else 0,
-                "average_sentiment": round(row[1], 3) if row and row[1] else 0.0
-            }
-    
+                return [row[0] for row in conn.execute("SELECT DISTINCT keyword FROM sentiments ORDER BY keyword").fetchall()]
+        except: return []
+
     def get_advanced_stats(self) -> Dict[str, Any]:
-        """Get advanced statistics including top and bottom keywords."""
+        """Get advanced stats."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                total = cursor.execute("SELECT COUNT(*) FROM sentiments").fetchone()[0] or 0
+                avg = cursor.execute("SELECT AVG(sentiment_score) FROM sentiments").fetchone()[0]
+                avg_sentiment = round(avg, 2) if avg else 0.0
                 
-                # Total articles count
-                cursor.execute("SELECT COUNT(*) FROM sentiments")
-                total_articles = cursor.fetchone()[0] or 0
+                top = [{"keyword": r[0], "avg_sentiment": round(r[1], 2)} for r in cursor.execute("SELECT keyword, AVG(sentiment_score) as a FROM sentiments GROUP BY keyword ORDER BY a DESC LIMIT 3").fetchall()]
+                bottom = [{"keyword": r[0], "avg_sentiment": round(r[1], 2)} for r in cursor.execute("SELECT keyword, AVG(sentiment_score) as a FROM sentiments GROUP BY keyword ORDER BY a ASC LIMIT 3").fetchall()]
                 
-                # Average sentiment
-                cursor.execute("SELECT AVG(sentiment_score) FROM sentiments")
-                avg_result = cursor.fetchone()[0]
-                average_sentiment = round(avg_result, 3) if avg_result else 0.0
-                
-                # Top 3 keywords with highest average sentiment
-                cursor.execute("""
-                    SELECT keyword, AVG(sentiment_score) as avg_sentiment
-                    FROM sentiments
-                    GROUP BY keyword
-                    HAVING COUNT(*) > 0
-                    ORDER BY avg_sentiment DESC
-                    LIMIT 3
-                """)
-                top_rows = cursor.fetchall()
-                top_keywords = [
-                    {"keyword": row[0], "avg_sentiment": round(row[1], 3)}
-                    for row in top_rows
-                ]
-                
-                # Bottom 3 keywords with lowest average sentiment
-                cursor.execute("""
-                    SELECT keyword, AVG(sentiment_score) as avg_sentiment
-                    FROM sentiments
-                    GROUP BY keyword
-                    HAVING COUNT(*) > 0
-                    ORDER BY avg_sentiment ASC
-                    LIMIT 3
-                """)
-                bottom_rows = cursor.fetchall()
-                bottom_keywords = [
-                    {"keyword": row[0], "avg_sentiment": round(row[1], 3)}
-                    for row in bottom_rows
-                ]
-                
-                return {
-                    "total_articles": total_articles,
-                    "average_sentiment": average_sentiment,
-                    "top_keywords": top_keywords,
-                    "bottom_keywords": bottom_keywords
-                }
-        except Exception as e:
-            print(f"❌ Advanced stats error: {e}")
-            return {
-                "total_articles": 0,
-                "average_sentiment": 0.0,
-                "top_keywords": [],
-                "bottom_keywords": []
-            }
+                return {"total_articles": total, "average_sentiment": avg_sentiment, "top_keywords": top, "bottom_keywords": bottom}
+        except Exception: return {"total_articles": 0, "average_sentiment": 0.0, "top_keywords": [], "bottom_keywords": []}

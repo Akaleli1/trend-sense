@@ -78,7 +78,7 @@ export default function SentimentChart() {
         setLoading(true);
         setError(null);
         
-        const response = await fetch('http://127.0.0.1:5000/api/trends');
+        const response = await fetch('http://127.0.0.1:5001/api/trends');
         const result: ApiResponse = await response.json();
         
         if (result.success && result.data) {

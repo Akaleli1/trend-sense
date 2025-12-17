@@ -16,7 +16,7 @@ export default function Home() {
         <div className="mb-8">
           <StatsCards />
         </div>
-        <SentimentChart />
+          <SentimentChart />
       </div>
     </div>
   );
